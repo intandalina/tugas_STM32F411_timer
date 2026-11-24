@@ -1,1 +1,74 @@
+#include "stm32f4xx.h"
+#include <stdint.h>
 
+#define LED_PIN (1U << 5) /* PA5 */
+#define BTN_PIN 0U        /* PA0 */
+
+volatile uint8_t blink_tick_flag = 0U;
+
+static void IO_Init(void)
+{
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+
+    /* PA5 sebagai output push-pull, kondisi awal mati (LOW) */
+    GPIOA->MODER  &= ~(3U << (5 * 2));
+    GPIOA->MODER  |=  (1U << (5 * 2));
+    GPIOA->OTYPER &= ~LED_PIN;
+    GPIOA->ODR    &= ~LED_PIN;
+
+    /* PA0 sebagai input dengan pull-up internal */
+    GPIOA->MODER &= ~(3U << (BTN_PIN * 2));
+    GPIOA->PUPDR &= ~(3U << (BTN_PIN * 2));
+    GPIOA->PUPDR |=  (1U << (BTN_PIN * 2));
+}
+
+static void TIM2_Blink_Init(void)
+{
+    /* Asumsi f_tim = 16 MHz: PSC = 15999 -> 1 kHz (1 ms/tick), ARR = 199 -> 200 ms */
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+    TIM2->CR1 = 0U;
+    TIM2->PSC = 15999U;
+    TIM2->ARR = 199U;
+    TIM2->DIER |= TIM_DIER_UIE;
+    TIM2->EGR  |= TIM_EGR_UG;
+    TIM2->SR   &= ~TIM_SR_UIF;
+
+    NVIC_SetPriority(TIM2_IRQn, 2);
+    NVIC_EnableIRQ(TIM2_IRQn);
+
+    TIM2->CR1 |= TIM_CR1_CEN;
+}
+
+void TIM2_IRQHandler(void)
+{
+    if (TIM2->SR & TIM_SR_UIF)
+    {
+        TIM2->SR &= ~TIM_SR_UIF;
+        blink_tick_flag = 1U;
+    }
+}
+
+int main(void)
+{
+    IO_Init();
+    TIM2_Blink_Init();
+
+    while (1)
+    {
+        uint8_t is_pressed = ((GPIOA->IDR & (1U << BTN_PIN)) == 0U);
+
+        if (is_pressed)
+        {
+            if (blink_tick_flag)
+            {
+                blink_tick_flag = 0U;
+                GPIOA->ODR ^= LED_PIN;
+            }
+        }
+        else
+        {
+            blink_tick_flag = 0U;
+            GPIOA->ODR &= ~LED_PIN;
+        }
+    }
+}
